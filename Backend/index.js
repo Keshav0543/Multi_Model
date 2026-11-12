@@ -1,5 +1,8 @@
-import "dotenv/config";
 import fs from "fs/promises";
+import { existsSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import cors from "cors";
 import express from "express";
 import mongoose from "mongoose";
 import upload from "./server.js";
@@ -22,7 +25,38 @@ import audioExtract from "./Services/audioService.js";
 import userschema from "../Backend/models/user.js";
 const app = express();
 
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+  ...(process.env.ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+]);
+
+// A missing Origin header means the Vite proxy or a server-to-server call.
+app.use(
+  cors({
+    origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)),
+  }),
+);
+
 app.use(express.json());
+
+function requireUser(req, res, next) {
+  const userId = req.get("x-user-id");
+
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(401).json({
+      message: "Missing or invalid user id",
+    });
+  }
+
+  req.userId = userId;
+  next();
+}
 
 const allowedAudioType = [
   "audio/mpeg",
@@ -36,6 +70,7 @@ const allowedAudioType = [
 
 app.post(
   "/api/upload/:sessionId",
+  requireUser,
   upload.array("myfiles", 3),
   async (req, res) => {
     try {
@@ -52,6 +87,22 @@ app.post(
           message: "First Create Session...",
         });
       }
+
+      const session = await Session.findOne({
+        sessionId,
+        userId: req.userId,
+      });
+
+      if (!session) {
+        await Promise.all(
+          req.files.map((file) => fs.unlink(file.path).catch(() => {})),
+        );
+        return res.status(403).json({
+          message: "This session does not belong to you",
+        });
+      }
+
+      const userId = req.userId;
       let uploaded_res = [];
       let response;
       for (const file of req.files) {
@@ -60,6 +111,7 @@ app.post(
         const existingdoc = await Document.findOne({
           sessionId,
           fileHash: hashres,
+          userId,
         });
         if (existingdoc) {
           const chunkCount = await chunkschema.countDocuments({
@@ -74,6 +126,7 @@ app.post(
         }
 
         const new_doc = await Document.create({
+          userId,
           sessionId,
           fileName: file.originalname,
           fileType: file.mimetype,
@@ -103,6 +156,7 @@ app.post(
             newChunk,
             sessionId,
             new_doc._id,
+            userId,
           );
           uploaded_res.push({
             docId: new_doc._id.toString(),
@@ -122,9 +176,8 @@ app.post(
       }
       if (uploaded_res.length > 0) {
         await Session.updateOne(
-          { sessionId },
+          { sessionId, userId },
           { $set: { lastActivityAt: new Date() } },
-          { upsert: true },
         );
       }
       res.status(200).json({
@@ -141,24 +194,7 @@ app.post(
   },
 );
 
-app.post("/api/session", async (req, res) => {
-  try {
-    const sessionId = uuidv4();
-    await Session.create({ sessionId });
-    res.status(200).json({
-      sessionId,
-      message: "New Session Id Created...",
-    });
-  } catch (err) {
-    console.error("Session create error:", err);
-    res.status(500).json({
-      message: "Failed to create session",
-      error: err.message,
-    });
-  }
-});
-
-app.post("/api/chat/:sessionId", async (req, res) => {
+app.post("/api/chat/:sessionId", requireUser, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { question, docId } = req.body;
@@ -167,6 +203,32 @@ app.post("/api/chat/:sessionId", async (req, res) => {
       return res.status(400).json({
         message: "Question is required",
       });
+    }
+
+    const session = await Session.findOne({
+      sessionId,
+      userId: req.userId,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        message: "Session not found for this user",
+      });
+    }
+
+    if (docId) {
+      if (!mongoose.Types.ObjectId.isValid(docId)) {
+        return res.status(400).json({ message: "Invalid document id" });
+      }
+
+      const ownedDocument = await Document.exists({
+        _id: docId,
+        userId: req.userId,
+      });
+
+      if (!ownedDocument) {
+        return res.status(404).json({ message: "Document not found" });
+      }
     }
 
     // Step 1: Convert question into embedding
@@ -198,9 +260,8 @@ Answer the question using only the provided context.
     const answer = await ChatModel(prompt);
 
     await Session.updateOne(
-      { sessionId },
+      { sessionId, userId: req.userId },
       { $set: { lastActivityAt: new Date() } },
-      { upsert: true },
     );
 
     res.status(200).json({
@@ -223,9 +284,9 @@ Answer the question using only the provided context.
   }
 });
 
-app.get("/api/docId", async (req, res) => {
+app.get("/api/docId", requireUser, async (req, res) => {
   try {
-    const documents = await Document.find({})
+    const documents = await Document.find({ userId: req.userId })
       .select("sessionId fileName fileType createdAt")
       .sort({ createdAt: -1 })
       .lean();
@@ -235,6 +296,11 @@ app.get("/api/docId", async (req, res) => {
     }
 
     const counts = await chunkschema.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(req.userId),
+        },
+      },
       { $group: { _id: "$documentId", count: { $sum: 1 } } },
     ]);
     const countByDoc = new Map(
@@ -260,7 +326,7 @@ app.get("/api/docId", async (req, res) => {
   }
 });
 
-app.get("/api/sId/:docId", async (req, res) => {
+app.get("/api/sId/:docId", requireUser, async (req, res) => {
   try {
     const { docId } = req.params;
 
@@ -268,7 +334,10 @@ app.get("/api/sId/:docId", async (req, res) => {
       return res.status(400).json({ message: "Invalid document id" });
     }
 
-    const document = await Document.findById(docId)
+    const document = await Document.findOne({
+      _id: docId,
+      userId: req.userId,
+    })
       .select("sessionId fileName fileType createdAt")
       .lean();
 
@@ -318,7 +387,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     const existingUser = await userschema.findOne({
-      $or: [{ EmailId }, { UserId }],
+      $or: [{ EmailId }, { userId: UserId }],
     });
 
     if (existingUser) {
@@ -334,7 +403,7 @@ app.post("/api/register", async (req, res) => {
     const result = await userschema.create({
       EmailId,
       Password: hash,
-      UserId,
+      userId: UserId,
     });
 
     const sessionId = uuidv4();
@@ -347,9 +416,9 @@ app.post("/api/register", async (req, res) => {
     return res.status(201).json({
       message: "User registered successfully",
       user: {
-        id: result._id,
+        id: result._id.toString(),
         EmailId: result.EmailId,
-        UserId: result.UserId,
+        userId: result.userId,
       },
       sessionId,
     });
@@ -366,7 +435,7 @@ app.post("/api/login", async (req, res) => {
   try {
     const { userId, Password } = req.body;
     if (!userId || !Password) {
-      return res.status(404).json({
+      return res.status(400).json({
         message: "Enter Full data...",
       });
     }
@@ -378,36 +447,71 @@ app.post("/api/login", async (req, res) => {
       });
     }
 
-    const isValid = bcrypt.compare(Password, response.Password);
+    const isValid = await bcrypt.compare(Password, response.Password);
     if (!isValid) {
-      return res.status(404).json({
+      return res.status(401).json({
         message: "Enter correct credentials...",
       });
     }
+
     const sessionId = uuidv4();
     await Session.create({ sessionId, userId: response._id });
 
-    return res.status(201).json({
-      message: "User registered successfully",
+    return res.status(200).json({
+      message: "Logged in successfully",
       user: {
-        id: result._id,
+        id: response._id.toString(),
         EmailId: response.EmailId,
-        UserId: response.userId,
+        userId: response.userId,
       },
       sessionId,
     });
   } catch (err) {
-    console.log(err.message);
-    throw err;
+    console.error("Login error:", err.message);
+    return res.status(500).json({
+      message: "Login failed",
+    });
   }
 });
+
+app.post("/api/session", requireUser, async (req, res) => {
+  try {
+    const sessionId = uuidv4();
+
+    await Session.create({
+      sessionId,
+      userId: req.userId,
+    });
+
+    return res.status(201).json({ sessionId });
+  } catch (err) {
+    console.error("Session create error:", err.message);
+    return res.status(500).json({
+      message: "Failed to create session",
+      error: err.message,
+    });
+  }
+});
+
+const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../frontend/dist");
+
+if (existsSync(path.join(clientDir, "index.html"))) {
+  app.use(express.static(clientDir));
+
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
+    if (path.extname(req.path)) return next();
+    res.sendFile(path.join(clientDir, "index.html"));
+  });
+}
 
 const InitializeConnection = async () => {
   try {
     await main();
     console.log("MongoDb connected...");
-    app.listen(3000, () => {
-      console.log("Server Listining On port:3000");
+    const Port=process.env.PORT || 3000;
+    app.listen(Port,"0.0.0.0" ,() => {
+      console.log(`Server Listining On port:${Port}`);
     });
   } catch (err) {
     console.error("Startup failed:", err.message);

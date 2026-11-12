@@ -3,6 +3,12 @@ const { Schema } = mongoose;
 
 const DocumentSchema = new Schema(
   {
+    userId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "userschema",
+      required: true,
+    },
+
     sessionId: {
       type: String,
       required: true,
@@ -25,7 +31,6 @@ const DocumentSchema = new Schema(
   },
   { timestamps: true },
 );
-
 
 DocumentSchema.index({ sessionId: 1, fileHash: 1 }, { unique: true });
 const Document = mongoose.model("Document", DocumentSchema);

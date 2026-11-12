@@ -3,6 +3,12 @@ const { Schema } = mongoose;
 
 const ChunkSchema = new Schema(
   {
+    userId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "userschema",
+      required: true,
+    },
+    
     sessionId: {
       type: String,
       required: true,

@@ -1,12 +1,12 @@
 import createEmbedding from "../config/EmbededModel.js";
 import chunkschema from "../models/chunk.js";
 
-async function generateEmbedding(chunks,sessionId,documentId){
+async function generateEmbedding(chunks,sessionId,documentId,userId){
     try{
         const docs=[];
         for(let i=0;i<chunks.length;i++){
             const embedding=await createEmbedding(chunks[i]);
-            docs.push({ sessionId, documentId, chunkIndex: i, text:chunks[i], embedding });
+            docs.push({ userId, sessionId, documentId, chunkIndex: i, text:chunks[i], embedding });
         }
         await chunkschema.insertMany(docs,{ordered:true});
         return { inserted: docs.length };
