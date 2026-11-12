@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar.jsx";
 import Composer from "./components/Composer.jsx";
 import MessageBubble, { TypingBubble } from "./components/MessageBubble.jsx";
+import AuthScreen from "./components/AuthScreen.jsx";
 import Icon from "./components/Icons.jsx";
 import {
   askQuestion,
+  clearAuth,
   createSession,
   getDocumentData,
   listDocuments,
+  loadAuth,
+  saveAuth,
+  setUnauthorizedHandler,
 } from "./lib/api.js";
 
 const uid = () =>
@@ -161,8 +166,9 @@ function EmptyState({ docs, resumed, sessionId, onPick, onOpenSidebar }) {
 }
 
 export default function App() {
-  const [sessionId, setSessionId] = useState("");
-  const [booting, setBooting] = useState(true);
+  const [auth, setAuth] = useState(() => loadAuth());
+  const [sessionId, setSessionId] = useState(() => loadAuth()?.sessionId ?? "");
+  const [booting, setBooting] = useState(false);
   const [bootError, setBootError] = useState("");
   const [docs, setDocs] = useState([]);
   const [documents, setDocuments] = useState([]);
@@ -176,10 +182,36 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [resumed, setResumed] = useState(false);
   const scrollRef = useRef(null);
-  const startedRef = useRef(false);
-  const documentsLoadedRef = useRef(false);
   const documentsRetryRef = useRef(0);
   const selectionRef = useRef(0);
+
+  const setActiveSession = useCallback((nextSessionId) => {
+    setSessionId(nextSessionId);
+    setAuth((previous) => {
+      if (!previous || previous.sessionId === nextSessionId) return previous;
+
+      const next = { ...previous, sessionId: nextSessionId };
+      saveAuth(next);
+      return next;
+    });
+  }, []);
+
+  const resetWorkspace = useCallback(() => {
+    selectionRef.current += 1;
+    documentsRetryRef.current = 0;
+    setSessionId("");
+    setBootError("");
+    setDocs([]);
+    setDocuments([]);
+    setDocumentsError("");
+    setDocumentsLoading(false);
+    setActiveDocId("");
+    setActiveDoc(null);
+    setMessages([]);
+    setInput("");
+    setResumed(false);
+    setSidebarOpen(false);
+  }, []);
 
   const startSession = useCallback(async () => {
     setBooting(true);
@@ -187,7 +219,7 @@ export default function App() {
 
     try {
       const data = await createSession();
-      setSessionId(data.sessionId);
+      setActiveSession(data.sessionId);
       return data.sessionId;
     } catch (err) {
       setSessionId("");
@@ -196,15 +228,11 @@ export default function App() {
     } finally {
       setBooting(false);
     }
-  }, []);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    startSession();
-  }, [startSession]);
+  }, [setActiveSession]);
 
   const loadDocuments = useCallback(async () => {
+    if (!loadAuth()) return;
+
     setDocumentsLoading(true);
     setDocumentsError("");
 
@@ -215,7 +243,7 @@ export default function App() {
     } catch (err) {
       setDocumentsError(err.message);
 
-      if (documentsRetryRef.current < 3) {
+      if (err.status !== 401 && documentsRetryRef.current < 3) {
         documentsRetryRef.current += 1;
         setTimeout(() => loadDocuments(), 1500 * documentsRetryRef.current);
       }
@@ -224,13 +252,18 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (documentsLoadedRef.current) return;
-    documentsLoadedRef.current = true;
-    loadDocuments();
-  }, [loadDocuments]);
+  const userId = auth?.user?.id ?? "";
 
   useEffect(() => {
+    if (!userId) return;
+
+    documentsRetryRef.current = 0;
+    loadDocuments();
+  }, [userId, loadDocuments]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+
     const refresh = () => {
       if (window.document.visibilityState === "visible") loadDocuments();
     };
@@ -242,7 +275,34 @@ export default function App() {
       window.document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("focus", refresh);
     };
-  }, [loadDocuments]);
+  }, [userId, loadDocuments]);
+
+  const signOut = useCallback(() => {
+    clearAuth();
+    setAuth(null);
+    resetWorkspace();
+  }, [resetWorkspace]);
+
+  useEffect(() => {
+    setUnauthorizedHandler(signOut);
+    return () => setUnauthorizedHandler(null);
+  }, [signOut]);
+
+  const handleAuthenticated = useCallback((nextAuth) => {
+    saveAuth(nextAuth);
+    setAuth(nextAuth);
+    setSessionId(nextAuth.sessionId);
+    selectionRef.current += 1;
+    documentsRetryRef.current = 0;
+    setBootError("");
+    setDocs([]);
+    setActiveDocId("");
+    setActiveDoc(null);
+    setMessages([]);
+    setInput("");
+    setResumed(false);
+    setSidebarOpen(false);
+  }, []);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -276,7 +336,7 @@ export default function App() {
       selectionRef.current += 1;
       const requestId = selectionRef.current;
 
-      setSessionId(doc.sessionId);
+      setActiveSession(doc.sessionId);
       setResumed(true);
       setActiveDocId(doc.docId);
       setActiveDoc(null);
@@ -315,7 +375,7 @@ export default function App() {
         setMessages([{ id: uid(), role: "assistant", error: err.message }]);
       }
     },
-    [documents],
+    [documents, setActiveSession],
   );
 
   const newSession = useCallback(async () => {
@@ -366,6 +426,10 @@ export default function App() {
     [activeDocId, input, sending, sessionId],
   );
 
+  if (!auth) {
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
+  }
+
   const offline = Boolean(bootError);
   const status = offline ? "offline" : sessionId ? "ready" : "connecting";
   const canChat = Boolean(sessionId) && !offline && docs.length > 0;
@@ -401,6 +465,8 @@ export default function App() {
         activeDocId={activeDocId}
         onRefreshDocuments={loadDocuments}
         onSelectDocument={selectDocument}
+        user={auth.user}
+        onSignOut={signOut}
       />
 
       <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">

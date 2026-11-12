@@ -101,6 +101,13 @@ const icons = {
   message: (
     <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H7l-4 3V11.5A8.5 8.5 0 0 1 11.5 3h1A8.5 8.5 0 0 1 21 11.5Z" />
   ),
+  logout: (
+    <>
+      <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" />
+      <path d="m10 17 5-5-5-5" />
+      <path d="M15 12H3" />
+    </>
+  ),
 };
 
 export default function Icon({

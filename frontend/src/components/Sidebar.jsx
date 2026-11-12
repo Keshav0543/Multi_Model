@@ -119,6 +119,8 @@ export default function Sidebar({
   activeDocId,
   onRefreshDocuments,
   onSelectDocument,
+  user,
+  onSignOut,
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -298,6 +300,32 @@ export default function Sidebar({
         </div>
 
         <div className="space-y-2 border-t border-white/5 p-3">
+          <div className="flex items-center gap-2 rounded-xl border border-white/5 bg-slate-950/40 px-2 py-2">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 text-[10px] font-semibold uppercase text-white ring-1 ring-white/20">
+              {(user?.userId || user?.EmailId || "?").slice(0, 1)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p
+                className="truncate text-[11px] font-medium text-slate-200"
+                title={user?.userId}
+              >
+                {user?.userId || "Signed in"}
+              </p>
+              <p className="truncate text-[9px] text-slate-500" title={user?.EmailId}>
+                {user?.EmailId}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-rose-300"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <Icon name="logout" className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={onNewSession}
