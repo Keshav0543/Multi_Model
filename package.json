@@ -1,0 +1,35 @@
+{
+  "name": "aiagent",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node Backend/bootstrap.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.27.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "axios": "^1.20.0",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "dotenv": "^18.0.6",
+    "exa-js": "^2.22.2",
+    "express": "^5.2.1",
+    "lodash": "^4.18.1",
+    "mammoth": "^1.13.0",
+    "mongoose": "^9.11.4",
+    "multer": "^2.4.0",
+    "parcel": "^2.16.4",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^8.4.0",
+    "readline-sync": "^1.4.10",
+    "uuid": "^14.0.3",
+    "zod": "^3.25.76"
+  }
+}
