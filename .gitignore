@@ -53,3 +53,7 @@ __pycache__/
 # Secrets and credentials
 service-account*.json
 credentials*.json
+# Backend private data
+Backend/.env
+Backend/uploads/
+Backend/.tmp-test-session.txt
